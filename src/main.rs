@@ -1,52 +1,83 @@
-use clap::{Arg, Command};
-use std::collections::HashMap;
-use std::process;
+use std::{collections::HashMap, process::ExitCode};
 
-static USAGE_MSG: &str =
-    "Usage:\n\n  adml [options] -s <path-to-adml-project> -b <path-to-output-directory>\n\n";
+fn print_usage() {
+    print!("Usage:\n\n  adml [options] -s <path-to-adml-project> -b <path-to-output-directory>\n\n");
+}
+
+fn exit_on_improper_usage() -> ExitCode {
+    print_usage();
+    ExitCode::from(1)
+}
 
 #[derive(Debug, Default)]
-struct RunConfig {
+struct RunOptions {
     path_to_project: String,
     path_to_output_dir: String,
 }
 
-#[derive(Debug)]
-struct OptionParamInfo;
+type ConfigMutatorFunc = fn(&mut RunOptions);
+type ConfigMutatorWithParamFunc = fn(&mut RunOptions, &str);
 
-#[derive(Debug)]
-enum ConfigMutator {
-    WithParam(fn(&mut RunConfig, &str)),
+struct OptionParamInfo {
+    display_name: String
 }
 
-#[derive(Debug)]
+enum ConfigMutatorWithPotentialParam {
+    NoParam(ConfigMutatorFunc),
+    Param(ConfigMutatorWithParamFunc, OptionParamInfo),
+}
+
 struct OptionInfo {
-    mutator: ConfigMutator,
+    specifier: char,
+    mutator_with_potential_param: ConfigMutatorWithPotentialParam,
 }
 
-fn options() -> HashMap<char, OptionInfo> {
+fn create_option_infos() -> HashMap<char, OptionInfo> {
     let mut map = HashMap::new();
 
-    fn addparam(
-        map: &mut HashMap<char, OptionInfo>,
-        _specifier: char,
-        _param_name: &str,
-        mutator: fn(&mut RunConfig, &str),
-    ) {
+    let mut add = |
+        specifier: char,
+        mutator: ConfigMutatorFunc
+    | {
         map.insert(
-            _specifier,
+            specifier,
             OptionInfo {
-                mutator: ConfigMutator::WithParam(mutator),
+                specifier,
+                mutator_with_potential_param: ConfigMutatorWithPotentialParam::NoParam(
+                    mutator
+                ),
+            }
+        )
+    };
+
+    let mut addparam = |
+        specifier: char,
+        param_name: &str,
+        mutator: ConfigMutatorWithParamFunc,
+    | {
+        map.insert( 
+            specifier,
+            OptionInfo {
+                specifier,
+                mutator_with_potential_param: ConfigMutatorWithPotentialParam::Param(
+                    mutator,
+                    OptionParamInfo {
+                        display_name: String::from(param_name)
+                    }
+                )
             },
         );
-    }
-
-    addparam(&mut map, 's', "path-to-adml-project", |run_config, arg| {
-        run_config.path_to_project = arg.to_string();
-    });
+    };
 
     addparam(
-        &mut map,
+        's',
+        "path-to-adml-project",
+        |run_config, arg| {
+            run_config.path_to_project = arg.to_string();
+        }
+    );
+
+    addparam(
         'b',
         "path-to-output-directory",
         |run_config, arg| {
@@ -57,42 +88,50 @@ fn options() -> HashMap<char, OptionInfo> {
     map
 }
 
-fn main() {
-    let option_infos = options();
+fn main() -> ExitCode {
+    let cmd_line_args: Vec<String> = std::env::args().collect();
 
-    let matches = Command::new("adml")
-        .version("1.0")
-        .about("OwO Whats this?")
-        .arg(
-            Arg::new("s")
-                .short('s')
-                .required(true)
-                .help("Path to ADML project")
-                .value_name("PATH")
-                .num_args(1),
-        )
-        .arg(
-            Arg::new("b")
-                .short('b')
-                .required(true)
-                .help("Path to output directory")
-                .value_name("PATH")
-                .num_args(1),
-        )
-        .get_matches();
+    let option_infos = create_option_infos();
 
-    let mut run_config = RunConfig::default();
-    for (specifier, option_info) in &option_infos {
-        if let ConfigMutator::WithParam(m) = &option_info.mutator {
-            let value = matches
-                .get_one::<String>(&specifier.to_string())
-                .expect("Required argument missing");
-            m(&mut run_config, value);
+    let mut run_options = RunOptions::default();
+
+    let mut parsing_param: Option<&ConfigMutatorWithParamFunc> = None;
+
+    for token in cmd_line_args.iter().skip(1) {
+        match &parsing_param {
+            None => {
+                if !token.starts_with('-') {
+                    return exit_on_improper_usage();
+                }
+                if token.chars().count() != 2 {
+                    return exit_on_improper_usage();
+                }
+                let option_specifier = token.chars().nth(1).unwrap();
+                if !option_infos.contains_key(&option_specifier) {
+                    return exit_on_improper_usage();
+                }
+                let option_info = option_infos.get(&option_specifier).unwrap();
+                match &option_info.mutator_with_potential_param {
+                    ConfigMutatorWithPotentialParam::NoParam(mutator) => mutator(&mut run_options),
+                    ConfigMutatorWithPotentialParam::Param(mutator, _param_info) => parsing_param = Some(&mutator),
+                }
+            },
+            Some(mutator) => {
+                mutator(&mut run_options, &token);
+                parsing_param = None;
+            },
         }
     }
-    if run_config.path_to_project.is_empty() || run_config.path_to_output_dir.is_empty() {
-        eprintln!("{}", USAGE_MSG);
-        process::exit(1);
+
+    if parsing_param.is_some() {
+        return exit_on_improper_usage();
     }
-    println!("RunConfig: {:?}", run_config);
+
+    println!("{:?}", run_options);
+
+    // if run_options.path_to_project.is_empty() || run_options.path_to_output_dir.is_empty() {
+    //     return exit_on_improper_usage();
+    // }
+
+    ExitCode::from(0)
 }

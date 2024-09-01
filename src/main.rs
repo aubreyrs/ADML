@@ -1,7 +1,11 @@
-use std::{collections::HashMap, process::ExitCode};
+use std::{collections::HashMap, fs, process::ExitCode};
+use colored::Colorize;
+
+mod adml;
+use adml::{BuildOptions, build};
 
 fn print_usage() {
-    print!("Usage:\n\n  adml [options] -s <path-to-adml-project> -b <path-to-output-directory>\n\n");
+    eprint!("Usage:\n\n  adml [options] -s <path-to-adml-project> -b <path-to-output-directory>\n");
 }
 
 fn exit_on_improper_usage() -> ExitCode {
@@ -9,14 +13,29 @@ fn exit_on_improper_usage() -> ExitCode {
     ExitCode::from(1)
 }
 
-#[derive(Debug, Default)]
-struct RunOptions {
-    path_to_project: String,
-    path_to_output_dir: String,
+trait ArgError {
+    fn name(&self) -> String;
+    fn info(&self) -> String;
 }
 
-type ConfigMutatorFunc = fn(&mut RunOptions);
-type ConfigMutatorWithParamFunc = fn(&mut RunOptions, &str);
+fn print_arg_error(e: &dyn ArgError, arg: &str) {
+    eprint!("\"{}\" <--- {}: {}", arg, e.name(), e.info());
+}
+
+struct PathNotExist;
+
+impl ArgError for PathNotExist {
+    fn name(&self) -> String {
+        "PathNotExist".to_string()
+    }
+
+    fn info(&self) -> String {
+        "No such path exists".to_string()
+    }
+}
+
+type ConfigMutatorFunc = fn(&mut BuildOptions) -> Result<(), Box<dyn ArgError>>;
+type ConfigMutatorWithParamFunc = fn(&mut BuildOptions, &str) -> Result<(), Box<dyn ArgError>>;
 
 struct OptionParamInfo {
     display_name: String
@@ -24,7 +43,7 @@ struct OptionParamInfo {
 
 enum ConfigMutatorWithPotentialParam {
     NoParam(ConfigMutatorFunc),
-    Param(ConfigMutatorWithParamFunc, OptionParamInfo),
+    Param(ConfigMutatorWithParamFunc, OptionParamInfo, bool),
 }
 
 struct OptionInfo {
@@ -53,6 +72,7 @@ fn create_option_infos() -> HashMap<char, OptionInfo> {
     let mut addparam = |
         specifier: char,
         param_name: &str,
+        required: bool,
         mutator: ConfigMutatorWithParamFunc,
     | {
         map.insert( 
@@ -63,7 +83,8 @@ fn create_option_infos() -> HashMap<char, OptionInfo> {
                     mutator,
                     OptionParamInfo {
                         display_name: String::from(param_name)
-                    }
+                    },
+                    required,
                 )
             },
         );
@@ -72,16 +93,26 @@ fn create_option_infos() -> HashMap<char, OptionInfo> {
     addparam(
         's',
         "path-to-adml-project",
-        |run_config, arg| {
-            run_config.path_to_project = arg.to_string();
+        true,
+        |build_config, arg| {
+            build_config.path_to_project = match fs::canonicalize(arg) {
+                Ok(path) => path,
+                Err(_) => return Err(Box::new(PathNotExist)),
+            };
+            Ok(())
         }
     );
 
     addparam(
         'b',
         "path-to-output-directory",
-        |run_config, arg| {
-            run_config.path_to_output_dir = arg.to_string();
+        true,
+        |build_config, arg| {
+            build_config.path_to_output_dir = match fs::canonicalize(arg) {
+                Ok(path) => path,
+                Err(_) => return Err(Box::new(PathNotExist)),
+            };
+            Ok(())
         },
     );
 
@@ -93,9 +124,21 @@ fn main() -> ExitCode {
 
     let option_infos = create_option_infos();
 
-    let mut run_options = RunOptions::default();
+    let mut required_options: Vec<char> = Vec::new();
+    for (specifier, option_info) in &option_infos {
+        if let ConfigMutatorWithPotentialParam::Param(_, _, required) = option_info.mutator_with_potential_param {
+            if required {
+                required_options.push(*specifier);
+            }
+        }
+    }
+    let required_options = required_options;
+
+    let mut build_options = BuildOptions::default();
 
     let mut parsing_param: Option<&ConfigMutatorWithParamFunc> = None;
+
+    let mut parsed_options: Vec<char> = Vec::new();
 
     for token in cmd_line_args.iter().skip(1) {
         match &parsing_param {
@@ -107,31 +150,51 @@ fn main() -> ExitCode {
                     return exit_on_improper_usage();
                 }
                 let option_specifier = token.chars().nth(1).unwrap();
+                if parsed_options.contains(&option_specifier) {
+                    return exit_on_improper_usage();
+                }
                 if !option_infos.contains_key(&option_specifier) {
                     return exit_on_improper_usage();
                 }
                 let option_info = option_infos.get(&option_specifier).unwrap();
                 match &option_info.mutator_with_potential_param {
-                    ConfigMutatorWithPotentialParam::NoParam(mutator) => mutator(&mut run_options),
-                    ConfigMutatorWithPotentialParam::Param(mutator, _param_info) => parsing_param = Some(&mutator),
+                    ConfigMutatorWithPotentialParam::NoParam(mutator) => {
+                        if let Err(e) = mutator(&mut build_options) {
+                            print_arg_error(&*e, &token);
+                            return 1.into();
+                        }
+                    },
+                    ConfigMutatorWithPotentialParam::Param(mutator, _, _) =>{
+                        parsing_param = Some(&mutator)
+                    },
                 }
+                parsed_options.push(option_specifier);
             },
             Some(mutator) => {
-                mutator(&mut run_options, &token);
+                if token.starts_with('-') {
+                    return exit_on_improper_usage();
+                }
+                if let Err(e) = mutator(&mut build_options, &token) {
+                    print_arg_error(&*e, &token);
+                    return 1.into();
+                }
                 parsing_param = None;
             },
         }
     }
-
     if parsing_param.is_some() {
         return exit_on_improper_usage();
     }
+    for specifier in &required_options {
+        if !parsed_options.contains(specifier) {
+            return exit_on_improper_usage();
+        }
+    }
 
-    println!("{:?}", run_options);
+    let result = build(&build_options);
+    if let Err(e) = result {
+        eprint!("{}\n  {}\n", e.name().red().bold(), e.info().yellow());
+    }
 
-    // if run_options.path_to_project.is_empty() || run_options.path_to_output_dir.is_empty() {
-    //     return exit_on_improper_usage();
-    // }
-
-    ExitCode::from(0)
+    0.into()
 }

@@ -14,7 +14,7 @@ pub struct BuildOptions {
 pub fn build(build_options: &BuildOptions) -> Result<()> {
     println!("{}", "Build starting...".green());
 
-    let project_path = &build_options.path_to_output_dir;
+    let project_path = &build_options.path_to_project;
     let project_config_path = project_path.join("adml.json");
     let project_config_content = match fs::read_to_string(&project_config_path) {
         Ok(s) => s,
@@ -22,6 +22,8 @@ pub fn build(build_options: &BuildOptions) -> Result<()> {
             return Err(Box::new(errors::File::new(&project_config_path)));
         },
     };
+
+    
 
     Ok(())
 }

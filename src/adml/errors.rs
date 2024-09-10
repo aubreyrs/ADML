@@ -13,8 +13,8 @@ pub struct File {
 
 impl File {
     pub fn new<T: AsRef<Path>>(path: T) -> Self {
-        File {
-            path: path.as_ref().to_path_buf()
+        Self {
+            path: path.as_ref().to_path_buf(),
         }
     }
 }
@@ -30,5 +30,35 @@ impl Error for File {
             .into_os_string()
             .into_string()
             .unwrap_or("...".to_string())
+    }
+}
+
+// errors in config files
+pub struct Configuration {
+    path: PathBuf,
+    line: usize,
+    column: usize,
+}
+
+impl Configuration {
+    pub fn new<T: AsRef<Path>>(path: T, line: usize, column: usize) -> Self {
+        Self {
+            path: path.as_ref().to_path_buf(),
+            line,
+            column,
+        }
+    }
+}
+
+impl Error for Configuration {
+    fn name(&self) -> String {
+        "ConfigurationError".to_string()
+    }
+
+    fn info(&self) -> String {
+        format!(
+            "Configuration error at ({}, {}) in file {}",
+            &self.line, &self.column, &self.path.clone().into_os_string().into_string().unwrap_or("...".to_string())
+        )
     }
 }

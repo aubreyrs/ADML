@@ -1,4 +1,6 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+
+use colored::Colorize;
 
 pub trait Error {
     fn name(&self) -> String;
@@ -7,45 +9,46 @@ pub trait Error {
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
-pub struct File {
+pub struct IO {
     path: PathBuf,
+    msg: String,
 }
 
-impl File {
-    pub fn new<T: AsRef<Path>>(path: T) -> Self {
+// errors in all file related operations
+impl IO {
+    pub fn new<T: Into<PathBuf>, U: Into<String>>(path: T, msg: U) -> Self {
         Self {
-            path: path.as_ref().to_path_buf(),
+            path: path.into(),
+            msg: msg.into(),
         }
     }
 }
 
-impl Error for File {
+impl Error for IO {
     fn name(&self) -> String {
         "FileError".to_string()
     }
 
     fn info(&self) -> String {
-        "Failed to process ".to_string() +
-        &self.path.clone()
-            .into_os_string()
-            .into_string()
-            .unwrap_or("...".to_string())
+        format!(
+            "Failed to process {}: {}",
+            &self.path.clone().into_os_string().into_string().unwrap().underline(),
+            &self.msg
+        )
     }
 }
 
 // errors in config files
 pub struct Configuration {
     path: PathBuf,
-    line: usize,
-    column: usize,
+    msg: String,
 }
 
 impl Configuration {
-    pub fn new<T: AsRef<Path>>(path: T, line: usize, column: usize) -> Self {
+    pub fn new<T: Into<PathBuf>, U: Into<String>>(path: T, msg: U) -> Self {
         Self {
-            path: path.as_ref().to_path_buf(),
-            line,
-            column,
+            path: path.into(),
+            msg: msg.into(),
         }
     }
 }
@@ -57,8 +60,9 @@ impl Error for Configuration {
 
     fn info(&self) -> String {
         format!(
-            "Configuration error at ({}, {}) in file {}",
-            &self.line, &self.column, &self.path.clone().into_os_string().into_string().unwrap_or("...".to_string())
+            "Configuration error in {}: {}",
+            &self.path.clone().into_os_string().into_string().unwrap().underline(),
+            &self.msg
         )
     }
 }

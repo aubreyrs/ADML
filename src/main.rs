@@ -2,10 +2,10 @@ use std::{collections::HashMap, fs, process::ExitCode};
 use colored::Colorize;
 
 mod adml;
-use adml::{BuildOptions, build};
+use adml::{BuildOptions, run_build};
 
 fn print_usage() {
-    eprint!("Usage:\n\n  adml [options] -s <path-to-adml-project> -b <path-to-output-directory>\n");
+    eprintln!("Usage:\n\n  adml [options] -s <path-to-adml-project> -b <path-to-output-directory>");
 }
 
 fn exit_on_improper_usage() -> ExitCode {
@@ -19,7 +19,7 @@ trait ArgError {
 }
 
 fn print_arg_error(e: &dyn ArgError, arg: &str) {
-    eprint!("\"{}\" <--- {}: {}", arg, e.name(), e.info());
+    eprintln!("\"{}\" <--- {}: {}", arg, e.name(), e.info());
 }
 
 struct PathNotExist;
@@ -191,9 +191,9 @@ fn main() -> ExitCode {
         }
     }
 
-    let result = build(&build_options);
+    let result = run_build(&build_options);
     if let Err(e) = result {
-        eprint!("{}\n  {}\n", e.name().red().bold(), e.info().yellow());
+        eprintln!("{}\n  {}\n", e.name().red().bold(), e.info().yellow());
     }
 
     0.into()
